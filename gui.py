@@ -1,27 +1,30 @@
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 from audio_streamer import stream_audio
+from audio_streamer import stream_vibr_file
 
 # === Appearance settings ===
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+readVibr = False
+
 # === Functions ===
 def add_files():
+    global readVibr
+    readVibr = False
     """Add one or more audio files to the list."""
-    files = filedialog.askopenfilenames(filetypes=[("Audio files", "*.wav *.mp3")])
+    files = filedialog.askopenfilenames(filetypes=[("Audio files", "*.wav *.mp3 *.vibr")])
     for f in files:
         if f not in file_list:
+            if ".vibr" in str(f):
+                readVibr = True
+                file_list.clear()
+                file_listbox.delete("1.0", ctk.END)
             file_list.append(f)
             file_listbox.insert(ctk.END, f)
-
-def remove_selected():
-    """Remove selected files from the list."""
-    selected = file_listbox.curselection()
-    for index in reversed(selected):  # remove from end to preserve indices
-        file_listbox.delete(index)
-        file_list.pop(index)
 
 def start_stream():
     """Start audio streaming in a separate thread."""
@@ -44,14 +47,18 @@ def start_stream():
     start_button.configure(state="disabled", text="Streaming...")
 
     def run_stream():
-        stream_audio(file_list, sr, serial_port)
+        global readVibr
+        if readVibr:
+            stream_vibr_file(file_list[0], serial_port)
+        else:
+            stream_audio(file_list, sr, serial_port)
         start_button.configure(state="normal", text="Start Streaming")
 
     threading.Thread(target=run_stream, daemon=True).start()
 
 # === Root Window ===
 root = ctk.CTk()
-root.title("Multi-Layer Audio Streamer")
+root.title("vibrant!")
 root.geometry("600x500")
 root.resizable(False, False)
 
@@ -69,10 +76,10 @@ ctk.CTkLabel(file_frame, text="Audio Layers:", font=("", 14, "bold")).pack(ancho
 file_listbox = ctk.CTkTextbox(file_frame, height=200)
 file_listbox.pack(padx=10, pady=5, fill="x")
 
+# Only Add Files button (Remove Selected removed)
 button_row = ctk.CTkFrame(file_frame)
 button_row.pack(pady=5)
 ctk.CTkButton(button_row, text="Add Files", command=add_files, width=120).pack(side="left", padx=5)
-ctk.CTkButton(button_row, text="Remove Selected", command=remove_selected, width=150).pack(side="left", padx=5)
 
 # === Parameters Frame ===
 param_frame = ctk.CTkFrame(root, corner_radius=10)

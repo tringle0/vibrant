@@ -5,22 +5,43 @@ import time
 import sounddevice as sd
 import threading
 
-def stream_audio(file_paths, sample_rate=3000, serial_port="COM3"):
+
+ # === Constants ===
+WINDOW_SIZE = 256
+HOP_SIZE = 128
+SMOOTH_NEIGHBORS = 3
+BAUD_RATE = 115200
+
+def stream_vibr_file(file_path, serial_port):
+
+    file = open(file_path, "r")
+    sample_rate = file.readline()
+
+     # === Serial connection ===
+    try:
+        ser = serial.Serial(serial_port, BAUD_RATE, timeout=1)
+        print(f"Connected to {serial_port}")
+    except serial.SerialException:
+        ser = None
+        print("Serial port not available, streaming skipped.")
+    delay = HOP_SIZE / int(sample_rate);  
+    print(f"Streaming delay: {delay:.4f} seconds per frame")
+
+    #stream
+    for l in file:
+        if ser:
+            ser.write(l.encode("utf-8"))
+        print(f"Sent: {l.strip()}")
+        time.sleep(delay)
+    file.close()
+
+
+def stream_audio(file_paths, sample_rate=3000, serial_port="COM3", output_file="output.vibr"):
     """
-    Stream multiple audio layers concurrently.
+    Stream multiple audio layers concurrently and log data to a text file.
     Each serial line contains amp,freq pairs for each file separated by semicolons.
     Example: "120,45;98,32;110,40"
-
-    Args:
-        file_paths (list[str]): Paths to audio files representing layers.
-        sample_rate (int): Audio sample rate in Hz.
-        serial_port (str): Serial port for streaming data (e.g., "COM3").
     """
-    # === Constants ===
-    WINDOW_SIZE = 256
-    HOP_SIZE = 128
-    SMOOTH_NEIGHBORS = 3
-    BAUD_RATE = 115200
 
     # === Decode all audio layers ===
     audio_layers = []
@@ -38,8 +59,7 @@ def stream_audio(file_paths, sample_rate=3000, serial_port="COM3"):
                 )
                 .run(capture_stdout=True, capture_stderr=True)
             )
-            audio = np.frombuffer(out, np.float32)
-            audio_layers.append(audio)
+            audio_layers.append(np.frombuffer(out, np.float32))
         except ffmpeg.Error as e:
             print(f"FFmpeg error decoding {path}: {e}")
             return
@@ -59,7 +79,7 @@ def stream_audio(file_paths, sample_rate=3000, serial_port="COM3"):
     # === Play all layers concurrently ===
     def play_all():
         combined = np.sum(audio_layers, axis=0)
-        combined /= np.max(np.abs(combined))  # normalize mix
+        combined /= np.max(np.abs(combined))
         sd.play(combined, samplerate=sample_rate)
         sd.wait()
 
@@ -69,9 +89,8 @@ def stream_audio(file_paths, sample_rate=3000, serial_port="COM3"):
     all_amps = []
     all_freqs = []
 
-    for layer_index, audio in enumerate(audio_layers):
-        avg_amps = []
-        avg_freqs = []
+    for audio in audio_layers:
+        avg_amps, avg_freqs = [], []
 
         for start in range(0, len(audio) - WINDOW_SIZE, HOP_SIZE):
             segment = audio[start:start + WINDOW_SIZE] * window
@@ -126,21 +145,31 @@ def stream_audio(file_paths, sample_rate=3000, serial_port="COM3"):
     delay = HOP_SIZE / sample_rate
     print(f"Streaming delay: {delay:.4f} seconds per frame")
 
-    # === Stream combined data ===
-    for frame in range(min_frames):
-        message_parts = []
-        for i in range(len(audio_layers)):
-            amp = int(round(all_amps[i][frame]))
-            freq = int(round(all_freqs[i][frame]))
-            message_parts.append(f"{amp},{freq}")
-        message = ";".join(message_parts) + "\n"
+    # === Open file for logging ===
+    with open(output_file, "w") as f:
 
-        if ser:
-            ser.write(message.encode('utf-8'))
-        print(f"Sent: {message.strip()}")
-        time.sleep(delay)
+        f.write(str(sample_rate) + '/\n')
+        # Stream data
+        for frame in range(min_frames):
+            message_parts = []
+            for i in range(len(audio_layers)):
+                amp = int(round(all_amps[i][frame]))
+                freq = int(round(all_freqs[i][frame]))
+                message_parts.append(f"{amp},{freq}")
+
+            message = ";".join(message_parts) + "\n"
+            
+            # Serial output
+            if ser:
+                ser.write(message.encode("utf-8"))
+
+            # File output
+            f.write(message)
+
+            print(f"Sent: {message.strip()}")
+            time.sleep(delay)
 
     if ser:
         ser.close()
 
-    print("Streaming complete")
+    print(f"Streaming complete. Data saved to {output_file}")
